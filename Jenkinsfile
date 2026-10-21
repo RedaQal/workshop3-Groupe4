@@ -83,11 +83,6 @@ pipeline {
                     '''
                 }
             }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'dependency-check-report/**', allowEmptyArchive: true
-                }
-            }
         }
         stage('Docker Build') {
             steps {
@@ -123,7 +118,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: 'semgrep-report.json,semgrep.sarif', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'semgrep-report.json,semgrep.sarif,dependency-check-report/**', allowEmptyArchive: true
         }
     }
 }
