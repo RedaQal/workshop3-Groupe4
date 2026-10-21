@@ -9,6 +9,7 @@ Le SAST analyse notre code. Dependency-Check analyse les **dépendances** (npm) 
 - Base de vulnérabilités : NVD (NIST), téléchargée au premier build puis conservée dans le volume `jenkins_home`.
 - Seuil : le build échoue si une dépendance a une CVE de score CVSS >= 7 (High / Critical).
 - Rapports : `dependency-check-report/` (HTML et JSON), archivés comme artefacts du build.
+- Périmètre : tout le dépôt sauf `node_modules`, `.next` et les dossiers de rapports (trop lent sinon). L'analyseur Sonatype OSS Index est désactivé (`--disableOssIndex`) car il échoue sans authentification.
 
 ## Prérequis (une seule fois, par l'administrateur Jenkins)
 

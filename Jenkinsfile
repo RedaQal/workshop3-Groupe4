@@ -65,16 +65,16 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
                     sh '''
-                        # Correction du bug : création du dossier de destination du rapport
-                        mkdir -p dependency-check-report
-
                         dependency-check.sh \
                           --project "devsecops-workshop" \
                           --scan . \
+                          --exclude "**/node_modules/**" \
                           --exclude "**/.next/**" \
                           --exclude "**/.scannerwork/**" \
+                          --exclude "**/dependency-check-report/**" \
                           --data /var/jenkins_home/dependency-check-data \
                           --nvdApiKey "$NVD_API_KEY" \
+                          --disableOssIndex \
                           --format HTML --format JSON \
                           --out dependency-check-report \
                           --failOnCVSS 7
