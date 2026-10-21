@@ -31,3 +31,12 @@ RUN python3 -m venv /opt/semgrep \
 USER jenkins
 COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
 RUN jenkins-plugin-cli -f /usr/share/jenkins/ref/plugins.txt
+
+# OWASP Dependency-Check CLI
+ARG DEPCHECK_VERSION=11.1.0
+RUN curl -fsSL -o /tmp/dc.zip \
+      https://github.com/jeremylong/DependencyCheck/releases/download/v${DEPCHECK_VERSION}/dependency-check-${DEPCHECK_VERSION}-release.zip \
+    && unzip -q /tmp/dc.zip -d /opt \
+    && chmod +x /opt/dependency-check/bin/dependency-check.sh \
+    && ln -s /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check.sh \
+    && rm /tmp/dc.zip

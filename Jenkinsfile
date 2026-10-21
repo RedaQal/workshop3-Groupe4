@@ -66,7 +66,29 @@ pipeline {
                 }
             }
         }
-
+        stage('SCA') {
+            steps {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
+                    sh '''
+                        dependency-check.sh \
+                          --project "devsecops-workshop" \
+                          --scan . \
+                          --exclude "**/.next/**" \
+                          --exclude "**/.scannerwork/**" \
+                          --data /var/jenkins_home/dependency-check-data \
+                          --nvdApiKey "$NVD_API_KEY" \
+                          --format HTML --format JSON \
+                          --out dependency-check-report \
+                          --failOnCVSS 7
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'dependency-check-report/**', allowEmptyArchive: true
+                }
+            }
+        }
         stage('Docker Build') {
             steps {
                 sh 'docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest .'
