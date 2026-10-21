@@ -15,7 +15,6 @@ pipeline {
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 checkout scm
@@ -29,12 +28,11 @@ pipeline {
             }
         }
 
-               stage('SAST') {
-            failFast false   // let both scanners finish so you get both reports even if one fails
-            parallel {
-
-                stage('SonarQube') {
-                    steps {
+        stage('SAST') {
+            steps {
+                // failFast false permet aux deux outils de finir leur exécution parallèlement
+                parallel(
+                    'SonarQube': {
                         withCredentials([string(credentialsId: 'sonar-token', variable: 'SONAR_TOKEN')]) {
                             sh '''
                                 sonar-scanner \
@@ -44,12 +42,8 @@ pipeline {
                                   -Dsonar.qualitygate.timeout=300
                             '''
                         }
-                    }
-                }
-
-                stage('Semgrep') {
-                    steps {
-                        // --error makes semgrep exit with code 1 when it finds anything
+                    },
+                    'Semgrep': {
                         sh '''
                             semgrep scan \
                               --config p/default \
@@ -63,6 +57,28 @@ pipeline {
                               .
                         '''
                     }
+                )
+            }
+        }
+
+        stage('SCA') {
+            steps {
+                withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
+                    sh '''
+                        dependency-check.sh \
+                          --project "devsecops-workshop" \
+                          --scan . \
+                          --exclude "**/node_modules/**" \
+                          --exclude "**/.next/**" \
+                          --exclude "**/.scannerwork/**" \
+                          --exclude "**/dependency-check-report/**" \
+                          --data /var/jenkins_home/dependency-check-data \
+                          --nvdApiKey "$NVD_API_KEY" \
+                          --disableOssIndex \
+                          --format HTML --format JSON \
+                          --out dependency-check-report \
+                          --failOnCVSS 7
+                    '''
                 }
             }
         }
@@ -85,8 +101,10 @@ pipeline {
 
                     echo "Attente du démarrage de l'application..."
                     for i in $(seq 1 20); do
-                      if curl -sf http://${CONTAINER_NAME}:3000/ > /dev/null; then
-                        echo "Staging OK -> http://localhost:3001"
+                      # Si Jenkins partage le réseau 'devsecops', on utilise le port interne 3000.
+                      # Sinon, on interroge le port mappé sur l'hôte (3001) via la passerelle.
+                      if curl -sf http://${CONTAINER_NAME}:3000/ > /dev/null || curl -sf http://localhost:3001/ > /dev/null; then
+                        echo "Staging OK -> Réponse de l'application reçue avec succès."
                         exit 0
                       fi
                       sleep 3
@@ -101,7 +119,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: 'semgrep-report.json,semgrep.sarif', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'semgrep-report.json,semgrep.sarif,dependency-check-report/**', allowEmptyArchive: true
         }
     }
 }
