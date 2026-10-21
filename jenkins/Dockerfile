@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Docker CLI (official static binary, independent of the Debian version)
+# Docker CLI (official static binary)
 ARG DOCKER_VERSION=27.3.1
 RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_VERSION}.tgz" \
     | tar -xz --strip-components=1 -C /usr/local/bin docker/docker
@@ -23,15 +23,6 @@ RUN curl -fsSL -o /tmp/sonar-scanner.zip \
     && ln -s /opt/sonar-scanner/bin/sonar-scanner /usr/local/bin/sonar-scanner \
     && rm /tmp/sonar-scanner.zip
 
-# Semgrep (in a venv to avoid conflicts with system Python)
-RUN python3 -m venv /opt/semgrep \
-    && /opt/semgrep/bin/pip install --no-cache-dir semgrep \
-    && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep
-
-USER jenkins
-COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
-RUN jenkins-plugin-cli -f /usr/share/jenkins/ref/plugins.txt
-
 # OWASP Dependency-Check CLI
 ARG DEPCHECK_VERSION=11.1.0
 RUN curl -fsSL -o /tmp/dc.zip \
@@ -40,3 +31,12 @@ RUN curl -fsSL -o /tmp/dc.zip \
     && chmod +x /opt/dependency-check/bin/dependency-check.sh \
     && ln -s /opt/dependency-check/bin/dependency-check.sh /usr/local/bin/dependency-check.sh \
     && rm /tmp/dc.zip
+
+# Semgrep (in a venv to avoid conflicts with system Python)
+RUN python3 -m venv /opt/semgrep \
+    && /opt/semgrep/bin/pip install --no-cache-dir semgrep \
+    && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep
+
+USER jenkins
+COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
+RUN jenkins-plugin-cli -f /usr/share/jenkins/ref/plugins.txt
