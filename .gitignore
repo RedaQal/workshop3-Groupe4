@@ -4,3 +4,4 @@ node_modules
 semgrep-report.json
 semgrep.sarif
 .scannerwork
+dependency-check-report/
