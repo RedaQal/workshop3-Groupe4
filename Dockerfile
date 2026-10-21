@@ -1,7 +1,12 @@
 FROM node:22-bookworm-slim
 
 WORKDIR /app
-RUN chown node:node /app
+
+# Build tools: better-sqlite3 compiles from source
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/* \
+    && chown node:node /app
 
 # L'image node fournit déjà l'utilisateur non-root "node"
 USER node

@@ -2,9 +2,9 @@ FROM jenkins/jenkins:lts-jdk21
 
 USER root
 
-# System tools: Python (for Semgrep), Node.js 22 (Next.js build)
+# System tools: Python (for Semgrep), build tools (better-sqlite3 compiles from source), Node.js 22
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl unzip ca-certificates gnupg python3 python3-venv python3-pip \
+      curl unzip ca-certificates gnupg python3 python3-venv python3-pip build-essential \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
