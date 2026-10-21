@@ -29,13 +29,22 @@ Le SAST analyse notre code. Dependency-Check analyse les **dépendances** (npm) 
 
 ## Avant / après
 
-Le projet utilise volontairement `next@14.2.15`, qui contient des vulnérabilités connues.
+Le projet utilisait volontairement `next@14.2.15`, qui contient des vulnérabilités connues.
 
 - **Avant** : le stage `SCA` échoue (CVE High / Critical sur `next`).
-- **Correction** : `npm install next@14`, puis commit de `package.json` et `package-lock.json`.
+- **Correction** : Dependabot a ouvert des Pull Requests de mise à jour, validées par le pipeline avant le merge.
+  - `next` 14.2.15 vers 16.4.2
+  - `react` et `react-dom` vers 19.3.1
+  - `better-sqlite3` vers 13.0.3 (impose Node >= 22, donc image Jenkins et image de l'app passées sur Node 22)
 - **Après** : le stage `SCA` passe et le build continue jusqu'au staging.
 
 Captures : `docs/screenshots/sca-before.png` et `docs/screenshots/sca-after.png`.
 
 ![SCA avant](screenshots/sca-before.png)
 ![SCA après](screenshots/sca-after.png)
+
+### Leçons
+
+- Dependabot peut proposer des mises à jour **majeures** qui cassent le build : toujours exécuter le pipeline sur la PR avant de merger.
+- `react` et `react-dom` doivent avoir la même version majeure ; les mettre à jour ensemble.
+- Les images Docker doivent rester sur une version **LTS** de Node, alignée entre Jenkins et l'application (règle `ignore` dans `.github/dependabot.yml`)

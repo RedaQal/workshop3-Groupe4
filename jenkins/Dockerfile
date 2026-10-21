@@ -2,10 +2,10 @@ FROM jenkins/jenkins:lts-jdk21
 
 USER root
 
-# System tools: Python (for Semgrep), Node.js 20 (Next.js build)
+# System tools: Python (for Semgrep), Node.js 22 (Next.js build)
 RUN apt-get update && apt-get install -y --no-install-recommends \
       curl unzip ca-certificates gnupg python3 python3-venv python3-pip \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
