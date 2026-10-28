@@ -63,8 +63,7 @@ docker compose up -d --build
 
 ## 3. Pipeline
 
-`Checkout` > `Install & Build` > `SAST (SonarQube || Semgrep)` > `SCA` > `Docker Build` > `Deploy Staging`
-
+`Checkout` > `Install & Build` > `SAST (SonarQube || Semgrep)` > `SCA` > `Docker Build` > `Deploy Staging` > `DAST`
 Les stages `SAST` et `SCA` **font échouer le build** en cas de violation :
 
 | Stage | Outil | Condition d'échec |
@@ -72,6 +71,7 @@ Les stages `SAST` et `SCA` **font échouer le build** en cas de violation :
 | SAST | SonarQube | Quality Gate en échec (`sonar.qualitygate.wait=true`, timeout 5 min) |
 | SAST | Semgrep | Au moins une règle déclenchée (`--error`) |
 | SCA | OWASP Dependency-Check | Dépendance avec une CVE de score CVSS >= 7 (`--failOnCVSS 7`) |
+| DAST | OWASP ZAP | Observation uniquement pour l'instant (échec seulement si ZAP lui-même plante) |
 
 - Les deux scanners SAST tournent en parallèle et vont jusqu'au bout, donc les deux rapports sont toujours produits.
 - Si un scan échoue, `Docker Build` et `Deploy Staging` ne sont pas exécutés.
@@ -81,6 +81,7 @@ Rapports :
 - Semgrep : artefacts du build (`semgrep-report.json`, `semgrep.sarif`)
 - Dependency-Check : artefacts du build (`dependency-check-report/`, HTML et JSON)
 - SonarQube : http://localhost:9000, projet `devsecops-workshop`
+- ZAP : artefacts du build (`zap-report/zap-report.html` et `.json`)
 
 ## 4. Configurer le Quality Gate SonarQube
 
@@ -191,6 +192,30 @@ Versions obtenues :
 - Les images Docker restent sur une version **LTS** de Node, alignée entre Jenkins et l'app (règle `ignore` dans `.github/dependabot.yml`).
 - Semgrep analyse aussi `.github/dependabot.yml` : il impose un `cooldown` de 7 jours avant de proposer une version fraîchement publiée (protection contre les paquets compromis). Les mises à jour de sécurité ne sont pas retardées.
 
+## 7 bis. DAST : OWASP ZAP
+
+Le SAST et le SCA analysent le code et les dépendances. Le DAST attaque l'application **déployée**, de l'extérieur.
+
+| Scan | Quand | Ce qu'il fait |
+|---|---|---|
+| Baseline (passif) | À chaque build, stage `DAST` | Explore l'application et analyse les réponses (en-têtes, cookies). N'envoie aucune attaque. |
+| Complet (actif) | Build avec le paramètre `ZAP_ACTIVE_SCAN` | Envoie de vraies charges d'attaque (XSS, injections). Staging uniquement. |
+
+- **Cible** : `http://devsecops-staging:3000` (réseau Docker `devsecops`).
+- **Mode** : observation, les alertes ne font pas échouer le build.
+- **Rapports** : artefacts du build (`zap-report/`).
+- **Détails** (lancement manuel, lecture du rapport, scan actif, discussion CI/CD) : [docs/zap.md](docs/zap.md)
+
+### Avant / après
+
+**Avant** : alertes sur les en-têtes de sécurité manquants.
+
+![ZAP avant](docs/screenshots/zap-before.png)
+
+**Après** : en-têtes ajoutés dans `next.config.js`.
+
+![ZAP après](docs/screenshots/zap-after.png)
+
 ## 8. Résultats : avant / après
 
 Le pipeline est d'abord exécuté sur le code **vulnérable**, puis sur le code **corrigé**.
@@ -266,6 +291,10 @@ Les scans passent et le build continue jusqu'au déploiement du staging (http://
 | Conflit sur une PR Dependabot | `main` a avancé depuis la création de la PR | Commenter `@dependabot rebase` sur la PR (ne pas résoudre le lockfile à la main) |
 | Dependabot propose une image Node non LTS (ex. Node 25) | Mise à jour majeure automatique | Règle `ignore` sur `node` dans `.github/dependabot.yml` |
 | `/api/comments` renvoie une erreur 500 en local | `better-sqlite3` non compilé sur la machine | Utiliser Docker (section 6) ou Node 22 avec les outils de compilation |
+| Stage `DAST` en erreur (code 3) | Cible injoignable : le staging n'est pas démarré ou n'est pas sur le réseau `devsecops` | Vérifier le stage `Deploy Staging` et `docker ps` |
+| Le premier build `DAST` est très long | Téléchargement de l'image ZAP (environ 1 Go) | Normal, les builds suivants sont rapides. Ou : `docker pull ghcr.io/zaproxy/zaproxy:stable` |
+| Le paramètre `ZAP_ACTIVE_SCAN` n'apparaît pas | Jenkins enregistre les paramètres après le premier build du nouveau Jenkinsfile | Lancer un premier build, puis utiliser *Build with Parameters* |
+| ZAP ne trouve aucune alerte de cookie | Le scan passif ne se connecte pas, donc ne voit pas le cookie de `/api/login` | Voir docs/zap.md, section sur les cookies |
 
 ## 10. Organisation du travail en équipe
 

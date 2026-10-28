@@ -14,6 +14,14 @@ pipeline {
         disableConcurrentBuilds()
     }
 
+    parameters {
+        booleanParam(
+            name: 'ZAP_ACTIVE_SCAN',
+            defaultValue: false,
+            description: 'Scan actif ZAP (plus long, envoie de vraies attaques). Staging uniquement, jamais en production.'
+        )
+    }
+
     stages {
         stage('Checkout') {
             steps {
@@ -115,11 +123,38 @@ pipeline {
                 '''
             }
         }
+        stage('DAST') {
+            steps {
+                script {
+                    env.ZAP_SCRIPT = params.ZAP_ACTIVE_SCAN ? 'zap-full-scan.py' : 'zap-baseline.py'
+                }
+                sh '''
+                    docker rm -f zap-scan || true
+                    rm -rf zap-report && mkdir -p zap-report
+
+                    echo "Scan ZAP : ${ZAP_SCRIPT} -> http://${CONTAINER_NAME}:3000"
+                    ZAP_EXIT=0
+                    docker run --name zap-scan --user root \
+                      --network ${DOCKER_NETWORK} \
+                      ghcr.io/zaproxy/zaproxy:stable \
+                      sh -c "mkdir -p /zap/wrk && ${ZAP_SCRIPT} -t http://${CONTAINER_NAME}:3000 -r zap-report.html -J zap-report.json -I" \
+                      || ZAP_EXIT=$?
+
+                    docker cp zap-scan:/zap/wrk/. zap-report/ || true
+                    docker rm -f zap-scan || true
+
+                    echo "Code de sortie ZAP : ${ZAP_EXIT}"
+                    # 0 = OK, 1 = FAIL, 2 = WARN, 3 = erreur ZAP (cible injoignable...)
+                    [ "${ZAP_EXIT}" -le 2 ]
+                '''
+            }
+        }
+
     }
 
     post {
         always {
-            archiveArtifacts artifacts: 'semgrep-report.json,semgrep.sarif,dependency-check-report/**', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'semgrep-report.json,semgrep.sarif,dependency-check-report/**,zap-report/**', allowEmptyArchive: true
         }
     }
 }

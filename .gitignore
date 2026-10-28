@@ -5,3 +5,4 @@ semgrep-report.json
 semgrep.sarif
 .scannerwork
 dependency-check-report/
+zap-report/
