@@ -1,3 +1,4 @@
+name: devsecops-workshop
 services:
   jenkins:
     build: ./jenkins
