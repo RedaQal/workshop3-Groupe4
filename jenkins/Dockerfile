@@ -37,6 +37,15 @@ RUN python3 -m venv /opt/semgrep \
     && /opt/semgrep/bin/pip install --no-cache-dir semgrep \
     && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep
 
+# Trivy (scan d'images). Version épinglée : ne jamais utiliser "latest"
+# (avis GHSA-69fq-xp46-6x23 : versions 0.69.4 à 0.69.6 compromises en mars 2026)
+ARG TRIVY_VERSION=0.76.1
+RUN ARCH="$(uname -m | sed 's/x86_64/64bit/; s/aarch64/ARM64/')" \
+    && mkdir -p /opt/trivy \
+    && curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-${ARCH}.tar.gz" \
+       | tar -xz -C /opt/trivy \
+    && ln -s /opt/trivy/trivy /usr/local/bin/trivy
+
 USER jenkins
 COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
 RUN jenkins-plugin-cli -f /usr/share/jenkins/ref/plugins.txt
