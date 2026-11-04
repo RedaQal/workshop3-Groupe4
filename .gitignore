@@ -7,3 +7,4 @@ semgrep.sarif
 dependency-check-report/
 zap-report/
 zap-wrk/
+zap-full-report/

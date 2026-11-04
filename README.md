@@ -215,7 +215,13 @@ Le SAST et le SCA analysent le code et les dépendances. Le DAST attaque l'appli
 **Après** : en-têtes ajoutés dans `next.config.js`.
 
 ![ZAP après](docs/screenshots/zap-after.png)
+### Scan actif
 
+Scan actif lancé sur le staging actuel (paramètre `ZAP_ACTIVE_SCAN`), sans corrections supplémentaires : 5 alertes (1 High, 2 Medium, 2 Info). L'alerte High est un faux positif probable, analysé dans la documentation.
+
+![ZAP scan actif](docs/screenshots/zap-active-summary.png)
+
+Résultats, discussion et limites : [docs/zap.md](docs/zap.md#résultats-du-scan-actif)
 ## 8. Résultats : avant / après
 
 Le pipeline est d'abord exécuté sur le code **vulnérable**, puis sur le code **corrigé**.
