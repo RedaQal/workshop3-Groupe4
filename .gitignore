@@ -6,3 +6,4 @@ semgrep.sarif
 .scannerwork
 dependency-check-report/
 zap-report/
+zap-wrk/

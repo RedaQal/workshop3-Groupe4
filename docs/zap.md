@@ -32,17 +32,18 @@ Pipeline : `Checkout` > `Install & Build` > `SAST` > `SCA` > `Docker Build` > `D
 ## Lancer ZAP à la main (atelier)
 
 Staging démarré par le pipeline (conteneur `devsecops-staging`), depuis un terminal bash ou WSL à la racine du projet :
-
+> **Windows (Git Bash)** : Git Bash réécrit les chemins qui commencent par `/`, ce qui casse les montages de volume (`-v ...:/zap/wrk`) et fait afficher l'aide de ZAP. Préfixer les commandes avec `MSYS_NO_PATHCONV=1`, utiliser PowerShell, ou utiliser la méthode `docker cp` ci-dessous qui n'a pas besoin de montage.
 ```bash
-mkdir -p zap-wrk && chmod 777 zap-wrk
+docker rm -f zap-scan 2>/dev/null
 
-docker run --rm --network devsecops --user root \
-  -v "$(pwd)/zap-wrk:/zap/wrk:rw" \
+MSYS_NO_PATHCONV=1 docker run --name zap-scan --user root --network devsecops \
   ghcr.io/zaproxy/zaproxy:stable \
-  zap-baseline.py -t http://devsecops-staging:3000 -r zap-report.html -I
-```
+  sh -c "mkdir -p /zap/wrk && zap-baseline.py -t http://devsecops-staging:3000 -r zap-report.html -J zap-report.json -I"
 
-Sous PowerShell, remplacer `$(pwd)` par `${PWD}`. Ouvrir ensuite `zap-wrk/zap-report.html` dans un navigateur.
+mkdir -p zap-report
+MSYS_NO_PATHCONV=1 docker cp zap-scan:/zap/wrk/. zap-report/
+docker rm zap-scan
+```
 
 ## Lire le rapport
 
