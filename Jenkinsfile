@@ -73,6 +73,8 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'nvd-api-key', variable: 'NVD_API_KEY')]) {
                     sh '''
+                        mkdir -p dependency-check-report
+                        mkdir -p /var/jenkins_home/dependency-check-data
                         dependency-check.sh \
                           --project "devsecops-workshop" \
                           --scan . \
