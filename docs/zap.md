@@ -31,8 +31,8 @@ Pipeline : `Checkout` > `Install & Build` > `SAST` > `SCA` > `Docker Build` > `D
 
 ## Lancer ZAP à la main (atelier)
 
-Staging démarré par le pipeline (conteneur `devsecops-staging`), depuis un terminal bash ou WSL à la racine du projet :
-> **Windows (Git Bash)** : Git Bash réécrit les chemins qui commencent par `/`, ce qui casse les montages de volume (`-v ...:/zap/wrk`) et fait afficher l'aide de ZAP. Préfixer les commandes avec `MSYS_NO_PATHCONV=1`, utiliser PowerShell, ou utiliser la méthode `docker cp` ci-dessous qui n'a pas besoin de montage.
+Le staging doit tourner (conteneur `devsecops-staging`, démarré par le pipeline). Depuis un terminal à la racine du projet :
+
 ```bash
 docker rm -f zap-scan 2>/dev/null
 
@@ -45,27 +45,35 @@ MSYS_NO_PATHCONV=1 docker cp zap-scan:/zap/wrk/. zap-report/
 docker rm zap-scan
 ```
 
+Ouvrir ensuite `zap-report/zap-report.html` dans un navigateur.
+
+> **Windows (Git Bash)** : Git Bash réécrit les chemins qui commencent par `/`, ce qui casse les montages de volume (`-v ...:/zap/wrk`) et fait afficher l'aide de ZAP au lieu de lancer le scan. La méthode ci-dessus n'utilise aucun montage (le rapport est extrait avec `docker cp`) et le préfixe `MSYS_NO_PATHCONV=1` désactive la réécriture. Sous PowerShell ou Linux, ce préfixe est inutile.
+
 ## Lire le rapport
 
-Le rapport classe les alertes par niveau de risque (High, Medium, Low, Informational). Pour chaque alerte, il indique les URL concernées, une description et une solution. Alertes typiques sur cette application :
+Le rapport classe les alertes par niveau de risque (High, Medium, Low, Informational). Pour chaque alerte, il indique les URL concernées, une description et une solution. Alertes rencontrées sur cette application :
 
 | Alerte ZAP | Risque | Correctif |
 |---|---|---|
 | Content Security Policy (CSP) Header Not Set | une XSS est plus facile à exploiter | en-tête `Content-Security-Policy` |
 | Missing Anti-clickjacking Header | l'application peut être affichée dans une iframe piégée | `X-Frame-Options` ou `frame-ancestors` |
 | X-Content-Type-Options Header Missing | interprétation incorrecte du type de contenu par le navigateur | `X-Content-Type-Options: nosniff` |
-| Server Leaks Information via "X-Powered-By" | le serveur révèle sa technologie, ce qui aide un attaquant | désactiver l'en-tête (`poweredByHeader: false`) |
+| Server Leaks Information via "X-Powered-By" | le serveur révèle sa technologie, ce qui aide un attaquant | `poweredByHeader: false` |
 | Permissions Policy Header Not Set | accès non restreint aux API du navigateur (caméra, micro...) | en-tête `Permissions-Policy` |
-| Cookie No HttpOnly Flag / Cookie without Secure Flag | vol du cookie par XSS, ou interception en clair | `httpOnly: true`, `secure: true` |
-| Cross-Origin-Opener-Policy Header Missing or Invalid | une page ouverte depuis un autre site peut garder une référence vers la fenêtre (fuites inter-origines) | `Cross-Origin-Opener-Policy: same-origin` |
+| Cross-Origin-Opener-Policy Header Missing or Invalid | une page ouverte depuis un autre site peut garder une référence vers la fenêtre | `Cross-Origin-Opener-Policy: same-origin` |
 | Cross-Origin-Embedder-Policy Header Missing or Invalid | pas d'isolation contre les ressources inter-origines | `Cross-Origin-Embedder-Policy: require-corp` |
 | Cross-Origin-Resource-Policy Header Missing or Invalid | d'autres sites peuvent charger nos ressources | `Cross-Origin-Resource-Policy: same-origin` |
+| CSP: Failure to Define Directive with No Fallback | une directive absente (ici `form-action`) équivaut à tout autoriser | ajouter `form-action 'self'` |
+| CSP: script-src unsafe-inline / style-src unsafe-inline | la CSP autorise les scripts et styles inline, ce qui affaiblit sa protection contre la XSS | CSP à nonce (voir « Alertes restantes ») |
+| Storable and Cacheable Content | une réponse sensible pourrait être conservée par un cache partagé | `Cache-Control: no-store` sur les réponses sensibles |
+| Non-Storable Content | informatif : la réponse n'est pas mise en cache | aucune action |
+| Cookie No HttpOnly Flag / Cookie without Secure Flag | vol du cookie par XSS, ou interception en clair | `httpOnly: true`, `secure: true` |
 
 Les alertes exactes dépendent de la version de ZAP et de celle de Next.js : se fier au rapport généré.
 
 ### À propos des cookies
 
-Le scan baseline ne soumet pas de formulaire et ne s'authentifie pas. Le cookie `session` n'est posé que par `POST /api/login` (appel JSON déclenché par du JavaScript), donc ZAP ne le voit pas en mode passif. Pour vérifier les attributs du cookie, deux possibilités :
+Le scan baseline ne soumet pas de formulaire et ne s'authentifie pas : dans le rapport, 100 % des endpoints découverts sont des requêtes `GET`. Le cookie `session` n'est posé que par `POST /api/login` (appel JSON déclenché par du JavaScript), donc ZAP ne le voit pas en mode passif. Pour vérifier les attributs du cookie, deux possibilités :
 
 - à la main : `curl -i -X POST http://localhost:3001/api/login -H "Content-Type: application/json" -d '{"username":"admin","password":"x"}'` et lire l'en-tête `Set-Cookie` ;
 - avec ZAP en mode manuel (proxy ou HUD) en se connectant depuis le navigateur, ou avec un scan authentifié.
@@ -83,20 +91,23 @@ git checkout vulnerable
 docker build -t devsecops-app:vuln .
 docker run -d --name vuln-app --network devsecops devsecops-app:vuln
 
-mkdir -p zap-wrk && chmod 777 zap-wrk
-docker run --rm --network devsecops --user root \
-  -v "$(pwd)/zap-wrk:/zap/wrk:rw" \
+docker rm -f zap-scan 2>/dev/null
+MSYS_NO_PATHCONV=1 docker run --name zap-scan --user root --network devsecops \
   ghcr.io/zaproxy/zaproxy:stable \
-  zap-full-scan.py -t http://vuln-app:3000 -r zap-full.html -I
+  sh -c "mkdir -p /zap/wrk && zap-full-scan.py -t http://vuln-app:3000 -r zap-full.html -I"
 
+mkdir -p zap-full-report
+MSYS_NO_PATHCONV=1 docker cp zap-scan:/zap/wrk/. zap-full-report/
+docker rm zap-scan
 docker rm -f vuln-app
 ```
 
 ## Corrections appliquées
 
-Ajout des en-têtes de sécurité et suppression de `X-Powered-By` dans `next.config.js` :
+Ajout des en-têtes de sécurité, suppression de `X-Powered-By` et désactivation du cache sur les routes d'API, dans `next.config.js` :
 
 ```js
+/** @type {import('next').NextConfig} */
 const nextConfig = {
   // ... options existantes (serverExternalPackages, etc.)
   poweredByHeader: false,
@@ -114,26 +125,52 @@ const nextConfig = {
           { key: 'Cross-Origin-Resource-Policy', value: 'same-origin' },
           {
             key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
+            value: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'self'",
           },
         ],
+      },
+      {
+        source: '/api/:path*',
+        headers: [{ key: 'Cache-Control', value: 'no-store' }],
       },
     ];
   },
 };
+module.exports = nextConfig;
 ```
 
-`'unsafe-inline'` reste nécessaire pour les scripts de Next.js sans configuration de nonces : ZAP signale donc encore une alerte de niveau moyen sur la CSP. C'est un bon point de discussion.
+Les trois en-têtes `Cross-Origin-*` sont sans risque ici car l'application ne charge aucune ressource externe. Sur une application qui en charge (CDN, images distantes), `Cross-Origin-Embedder-Policy: require-corp` casserait ces chargements.
 
 ## Avant / après
 
 **Avant** : alertes sur les en-têtes manquants.
-Premier scan sur le staging : **10 alertes** (2 Medium, 6 Low, 2 Informational), toutes liées aux en-têtes HTTP et au cache.
+
 ![ZAP avant](screenshots/zap-before.png)
 
-**Après** : en-têtes ajoutés, alertes correspondantes disparues.
+**Après** : en-têtes ajoutés.
 
 ![ZAP après](screenshots/zap-after.png)
+
+| | Avant | Après |
+|---|---|---|
+| Medium | 2 | 3 |
+| Low | 6 | 0 |
+| Informational | 2 | 2 |
+| **Total** | **10** | **5** |
+
+Le nombre de Medium augmente parce que ZAP ne se contente plus de signaler l'absence de CSP : il en analyse maintenant le contenu. Les 6 alertes Low et les deux Medium d'origine (CSP absente, anti-clickjacking) ont disparu.
+
+### Alertes restantes et décisions
+
+| Alerte | Décision |
+|---|---|
+| CSP: script-src unsafe-inline | **Risque accepté** : Next.js injecte des scripts inline pour l'hydratation. Correction possible avec une CSP à nonce générée par requête (middleware/proxy), au prix d'un rendu dynamique de toutes les pages. |
+| CSP: style-src unsafe-inline | **Risque accepté** : l'application utilise des attributs `style={{...}}`. Correction : déplacer les styles dans une feuille CSS, puis utiliser un nonce. |
+| CSP: directive sans repli (`form-action`) | **Corrigé** : `form-action 'self'` et `base-uri 'self'` ajoutés. À confirmer au prochain scan. |
+| Storable and Cacheable Content | **Informationnel** : les pages publiques statiques ne contiennent rien de sensible. `Cache-Control: no-store` ajouté sur `/api/*`. |
+| Non-Storable Content | **Informationnel** : concerne `robots.txt` et `sitemap.xml`, qui n'existent pas dans l'application. |
+
+Une CSP présente mais permissive vaut mieux que pas de CSP, sans être idéale : c'est un bon point de discussion sur le compromis entre sécurité et compatibilité avec le framework.
 
 ## Passer en mode bloquant
 
@@ -146,6 +183,6 @@ En mode observation, un warning ne casse pas le build. Pour faire échouer le bu
 - **Baseline à chaque build, scan actif à la demande ou la nuit** : le passif est rapide et sans risque ; l'actif est lent et envoie de vraies attaques.
 - **Jamais en production** : un scan actif peut créer des données, déclencher des alertes ou dégrader le service. Utiliser un environnement jetable ou de pré-production.
 - **Couverture limitée** : ZAP ne teste que ce qu'il découvre. Les parcours derrière une authentification ou accessibles seulement en JavaScript demandent une configuration (contexte, utilisateur, import OpenAPI).
-- **Faux positifs** : trier les résultats, puis classer en `IGNORE` les alertes justifiées plutôt que de laisser un rapport bruyant que personne ne lit.
+- **Faux positifs et risques acceptés** : trier les résultats, puis classer en `IGNORE` les alertes justifiées et les documenter (comme `unsafe-inline` ici) plutôt que de laisser un rapport bruyant que personne ne lit.
 - **Durcir progressivement** : observation d'abord, puis blocage sur les alertes critiques, comme pour le SAST. Un seuil trop strict dès le départ fait désactiver l'outil.
 - **Rapport comme preuve** : archiver le rapport HTML pour chaque build permet de suivre l'évolution et de justifier les décisions.
