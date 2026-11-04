@@ -219,7 +219,9 @@ Le SAST et le SCA analysent le code et les dépendances. Le DAST attaque l'appli
 ## 8. Résultats : avant / après
 
 Le pipeline est d'abord exécuté sur le code **vulnérable**, puis sur le code **corrigé**.
-
+| | Avant | Après |
+|---|---|---|
+| Alertes ZAP | 10 (2 Medium, 6 Low, 2 Info) | 4 (2 Medium, 0 Low, 2 Info) |
 ### 8.1 Avant : code vulnérable
 
 Le build échoue au stage `SAST` : le Quality Gate SonarQube est en échec et Semgrep bloque sur ses findings. Les stages suivants ne sont pas exécutés.

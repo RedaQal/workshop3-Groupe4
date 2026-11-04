@@ -147,18 +147,18 @@ Les trois en-têtes `Cross-Origin-*` sont sans risque ici car l'application ne c
 
 ![ZAP avant](screenshots/zap-before.png)
 
-**Après** : en-têtes ajoutés.
+**Après** : en-têtes ajoutés et CSP complétée.
 
 ![ZAP après](screenshots/zap-after.png)
 
-| | Avant | Après |
-|---|---|---|
-| Medium | 2 | 3 |
-| Low | 6 | 0 |
-| Informational | 2 | 2 |
-| **Total** | **10** | **5** |
+| | Avant | Après 1re correction (en-têtes) | Après CSP complète |
+|---|---|---|---|
+| Medium | 2 | 3 | 2 |
+| Low | 6 | 0 | 0 |
+| Informational | 2 | 2 | 2 |
+| **Total** | **10** | **5** | **4** |
 
-Le nombre de Medium augmente parce que ZAP ne se contente plus de signaler l'absence de CSP : il en analyse maintenant le contenu. Les 6 alertes Low et les deux Medium d'origine (CSP absente, anti-clickjacking) ont disparu.
+Le nombre de Medium monte à 3 après la première correction parce que ZAP ne se contente plus de signaler l'absence de CSP : il en analyse le contenu et relève une directive manquante (`form-action`). Ajouter `form-action` et `base-uri` le ramène à 2.
 
 ### Alertes restantes et décisions
 
@@ -166,12 +166,12 @@ Le nombre de Medium augmente parce que ZAP ne se contente plus de signaler l'abs
 |---|---|
 | CSP: script-src unsafe-inline | **Risque accepté** : Next.js injecte des scripts inline pour l'hydratation. Correction possible avec une CSP à nonce générée par requête (middleware/proxy), au prix d'un rendu dynamique de toutes les pages. |
 | CSP: style-src unsafe-inline | **Risque accepté** : l'application utilise des attributs `style={{...}}`. Correction : déplacer les styles dans une feuille CSS, puis utiliser un nonce. |
-| CSP: directive sans repli (`form-action`) | **Corrigé** : `form-action 'self'` et `base-uri 'self'` ajoutés. À confirmer au prochain scan. |
-| Storable and Cacheable Content | **Informationnel** : les pages publiques statiques ne contiennent rien de sensible. `Cache-Control: no-store` ajouté sur `/api/*`. |
-| Non-Storable Content | **Informationnel** : concerne `robots.txt` et `sitemap.xml`, qui n'existent pas dans l'application. |
+| Storable and Cacheable Content | **Informationnel** : ne concerne plus que les pages publiques statiques et les fichiers `/_next/static` (nom haché, cache d'un an, comportement normal). Aucune donnée sensible. |
+| Non-Storable Content | **Informationnel** : confirme que `Cache-Control: no-store` s'applique bien aux routes `/api/*`, ainsi qu'à `robots.txt` et `sitemap.xml`. |
+
+L'alerte `form-action` est **corrigée** (confirmé par ce scan), et `Cache-Control: no-store` est **vérifié** sur `/api/*`.
 
 Une CSP présente mais permissive vaut mieux que pas de CSP, sans être idéale : c'est un bon point de discussion sur le compromis entre sécurité et compatibilité avec le framework.
-
 ## Passer en mode bloquant
 
 En mode observation, un warning ne casse pas le build. Pour faire échouer le build sur certaines règles, ZAP lit un fichier de configuration (`-c`) où chaque règle est classée `IGNORE`, `WARN` ou `FAIL`. Le générer avec l'option `-g`, passer les règles voulues en `FAIL` (par exemple les cookies et la CSP), puis le fournir à ZAP avec `-c` en retirant `-I`.
