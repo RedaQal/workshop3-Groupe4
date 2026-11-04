@@ -57,6 +57,9 @@ Le rapport classe les alertes par niveau de risque (High, Medium, Low, Informati
 | Server Leaks Information via "X-Powered-By" | le serveur révèle sa technologie, ce qui aide un attaquant | désactiver l'en-tête (`poweredByHeader: false`) |
 | Permissions Policy Header Not Set | accès non restreint aux API du navigateur (caméra, micro...) | en-tête `Permissions-Policy` |
 | Cookie No HttpOnly Flag / Cookie without Secure Flag | vol du cookie par XSS, ou interception en clair | `httpOnly: true`, `secure: true` |
+| Cross-Origin-Opener-Policy Header Missing or Invalid | une page ouverte depuis un autre site peut garder une référence vers la fenêtre (fuites inter-origines) | `Cross-Origin-Opener-Policy: same-origin` |
+| Cross-Origin-Embedder-Policy Header Missing or Invalid | pas d'isolation contre les ressources inter-origines | `Cross-Origin-Embedder-Policy: require-corp` |
+| Cross-Origin-Resource-Policy Header Missing or Invalid | d'autres sites peuvent charger nos ressources | `Cross-Origin-Resource-Policy: same-origin` |
 
 Les alertes exactes dépendent de la version de ZAP et de celle de Next.js : se fier au rapport généré.
 
@@ -106,6 +109,9 @@ const nextConfig = {
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+          { key: 'Cross-Origin-Embedder-Policy', value: 'require-corp' },
+          { key: 'Cross-Origin-Resource-Policy', value: 'same-origin' },
           {
             key: 'Content-Security-Policy',
             value: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
@@ -122,7 +128,7 @@ const nextConfig = {
 ## Avant / après
 
 **Avant** : alertes sur les en-têtes manquants.
-
+Premier scan sur le staging : **10 alertes** (2 Medium, 6 Low, 2 Informational), toutes liées aux en-têtes HTTP et au cache.
 ![ZAP avant](screenshots/zap-before.png)
 
 **Après** : en-têtes ajoutés, alertes correspondantes disparues.
