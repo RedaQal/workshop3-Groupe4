@@ -93,6 +93,44 @@ Pour chaque vulnérabilité, le tableau indique :
 3. **La faille est-elle atteignable ?** Une vulnérabilité dans un outil de build absent de l'exécution compte moins qu'une vulnérabilité dans un paquet chargé par l'application. Trivy ne le sait pas : c'est un jugement à porter.
 4. **Faux positifs possibles** : le scan de secrets peut signaler des fichiers de test embarqués dans `node_modules` (clés d'exemple). À vérifier avant de conclure.
 
+## Résultats du scan de l'image actuelle
+
+Premier scan avec le seuil par défaut (`HIGH,CRITICAL`, correctif disponible), sur l'image construite par le Dockerfile en une seule étape.
+
+![Pipeline Jenkins : Image Scan en échec](screenshots/trivy-before-pipeline.png)
+
+![Trivy avant : vulnérabilités HIGH](screenshots/trivy-before.png)
+
+Le stage `Image Scan (Trivy)` échoue : `Deploy Staging` et `DAST` ne sont pas exécutés. Les stages précédents (SAST, SCA, Docker Build) sont passés.
+
+Le rapport liste **9 vulnérabilités de niveau HIGH sur 5 paquets Node.js**, toutes avec un correctif disponible :
+
+| Paquet | Version installée | Vulnérabilités | Nature | Version corrigée |
+|---|---|---|---|---|
+| `brace-expansion` | 2.0.2 | 5 (CVE-2026-102276, -102278, -13149, -14257, -69152) | déni de service par des motifs d'accolades malveillants | 2.1.6 (branche 2.x) |
+| `ip-address` | 10.1.0 | CVE-2026-69192 | analyse d'adresse IP incohérente, pouvant mener à une SSRF | 10.3.1 |
+| `pacote` | 19.0.2 et 20.0.1 | CVE-2026-9496 | déni de service | 21.5.1 |
+| `picomatch` | 4.0.3 | CVE-2026-33671 | déni de service par expression régulière | 4.0.4 |
+| `sigstore` | 3.1.0 | CVE-2026-48815 | certificats non autorisés acceptés (option de vérification ignorée) | 4.1.1 |
+
+### D'où viennent ces paquets ?
+
+Aucun de ces cinq paquets n'apparaît dans le `package-lock.json` du projet, qui ne contient que `next`, `react`, `react-dom`, `better-sqlite3` et leurs dépendances. Ils proviennent très probablement de **npm lui-même**, livré avec l'image de base Node et utilisé uniquement pour construire l'application.
+
+Vérification : chaque constat du rapport JSON porte le chemin du fichier analysé.
+
+```bash
+grep PkgPath trivy-report/trivy-report.json | sort -u
+```
+
+Des chemins du type `usr/local/lib/node_modules/npm/node_modules/...` confirment l'origine.
+
+### Ce que ce résultat montre
+
+- **Trivy voit ce que les autres outils ne voient pas.** Dependency-Check analyse les fichiers du dépôt et est passé : ces paquets n'existent que dans l'image finale.
+- **Le risque réel est plus faible que le niveau affiché.** npm n'est pas utilisé par l'application à l'exécution. Mais ces paquets sont dans l'image, donc ils bloquent le seuil, et les retirer ne coûte rien.
+- **La correction est dans le Dockerfile, pas dans le code** : ne pas livrer npm dans l'image finale (build en deux étapes, voir « Remédiation »).
+
 ## Remédiation
 
 ### 1. Mettre à jour l'image
@@ -123,7 +161,8 @@ WORKDIR /app
 
 # npm et yarn ne servent pas à l'exécution : on retire leurs dépendances embarquées
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
-           /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg
+           /opt/yarn-* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+    && chown node:node /app
 
 COPY --from=builder --chown=node:node /app ./
 
@@ -170,6 +209,7 @@ Sans date d'expiration, une exception devient permanente et finit oubliée.
 
 ## Discussion : Trivy dans un pipeline CI/CD
 
+- **Chaque outil a son périmètre** : SAST pour le code, SCA pour les dépendances du projet, DAST pour l'application qui tourne, Trivy pour l'image livrée (OS de base, outils embarqués comme npm). Les paquets signalés ci-dessus n'étaient visibles que par Trivy.
 - **Une image qui passe aujourd'hui peut échouer demain** : de nouvelles CVE sont publiées chaque jour, sans aucun changement de code. Il faut aussi rescanner régulièrement les images déjà déployées (par exemple chaque nuit).
 - **Le seuil est une décision de politique, pas technique** : trop strict, l'équipe contourne l'outil ; trop permissif, il ne sert à rien. Durcir progressivement et documenter les exceptions.
 - **Bloquer sur ce qui est corrigeable** (`--ignore-unfixed`) évite de faire échouer un build pour une action impossible.
