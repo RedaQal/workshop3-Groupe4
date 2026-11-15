@@ -25,6 +25,11 @@ pipeline {
             choices: ['HIGH,CRITICAL', 'CRITICAL', 'NONE'],
             description: 'Sévérité qui fait échouer le build (NONE = observation seulement)'
         )
+        booleanParam(
+            name: 'TRIVY_IGNORE_UNFIXED',
+            defaultValue: true,
+            description: 'Ignorer, pour le blocage, les vulnérabilités sans correctif publié'
+        )
     }
 
     stages {
@@ -106,9 +111,13 @@ pipeline {
         stage('Image Scan (Trivy)') {
             steps {
                 sh '''
+                    export TRIVY_DISABLE_VEX_NOTICE=1
                     mkdir -p trivy-report
                     IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
                     COMMON="--cache-dir /var/jenkins_home/trivy-cache --scanners vuln,secret --image-config-scanners misconfig,secret"
+
+                    UNFIXED_FLAG=""
+                    if [ "${TRIVY_IGNORE_UNFIXED}" = "true" ]; then UNFIXED_FLAG="--ignore-unfixed"; fi
 
                     # 1. Rapport complet HIGH et CRITICAL : ne bloque jamais
                     trivy image $COMMON --severity HIGH,CRITICAL \
@@ -129,8 +138,8 @@ pipeline {
                     if [ "${TRIVY_BLOCK_SEVERITY}" = "NONE" ]; then
                       echo "Mode observation : aucun blocage"
                     else
-                      echo "Seuil de blocage : ${TRIVY_BLOCK_SEVERITY} (vulnérabilités avec correctif disponible)"
-                      trivy image $COMMON --severity "${TRIVY_BLOCK_SEVERITY}" --ignore-unfixed \
+                      echo "Seuil de blocage : ${TRIVY_BLOCK_SEVERITY} (vulnérabilités sans correctif ignorées : ${TRIVY_IGNORE_UNFIXED})"
+                      trivy image $COMMON --severity "${TRIVY_BLOCK_SEVERITY}" $UNFIXED_FLAG \
                         --exit-code 1 --format table "$IMAGE"
                     fi
                 '''
