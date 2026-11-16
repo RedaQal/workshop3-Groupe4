@@ -20,6 +20,16 @@ pipeline {
             defaultValue: false,
             description: 'Scan actif ZAP (plus long, envoie de vraies attaques). Staging uniquement, jamais en production.'
         )
+        choice(
+            name: 'TRIVY_BLOCK_SEVERITY',
+            choices: ['HIGH,CRITICAL', 'CRITICAL', 'NONE'],
+            description: 'Sévérité qui fait échouer le build (NONE = observation seulement)'
+        )
+        booleanParam(
+            name: 'TRIVY_IGNORE_UNFIXED',
+            defaultValue: true,
+            description: 'Ignorer, pour le blocage, les vulnérabilités sans correctif publié'
+        )
     }
 
     stages {
@@ -95,10 +105,46 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                sh 'docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest .'
+                sh 'docker build --pull -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest .'
             }
         }
+        stage('Image Scan (Trivy)') {
+            steps {
+                sh '''
+                    export TRIVY_DISABLE_VEX_NOTICE=1
+                    mkdir -p trivy-report
+                    IMAGE="${IMAGE_NAME}:${IMAGE_TAG}"
+                    COMMON="--cache-dir /var/jenkins_home/trivy-cache --scanners vuln,secret --image-config-scanners misconfig,secret"
 
+                    UNFIXED_FLAG=""
+                    if [ "${TRIVY_IGNORE_UNFIXED}" = "true" ]; then UNFIXED_FLAG="--ignore-unfixed"; fi
+
+                    # 1. Rapport complet HIGH et CRITICAL : ne bloque jamais
+                    trivy image $COMMON --severity HIGH,CRITICAL \
+                      --format json --output trivy-report/trivy-report.json "$IMAGE"
+
+                    # Garde-fou : un scan qui n'a rien analysé sortirait en succès
+                    grep -q '"Family"' trivy-report/trivy-report.json \
+                      || { echo "Rapport Trivy incomplet : OS de l'image non analysé"; exit 1; }
+
+                    trivy convert --format table --output trivy-report/trivy-report.txt trivy-report/trivy-report.json
+                    cat trivy-report/trivy-report.txt
+                    if [ -f /opt/trivy/contrib/html.tpl ]; then
+                      trivy convert --format template --template "@/opt/trivy/contrib/html.tpl" \
+                        --output trivy-report/trivy-report.html trivy-report/trivy-report.json
+                    fi
+
+                    # 2. Seuil de blocage
+                    if [ "${TRIVY_BLOCK_SEVERITY}" = "NONE" ]; then
+                      echo "Mode observation : aucun blocage"
+                    else
+                      echo "Seuil de blocage : ${TRIVY_BLOCK_SEVERITY} (vulnérabilités sans correctif ignorées : ${TRIVY_IGNORE_UNFIXED})"
+                      trivy image $COMMON --severity "${TRIVY_BLOCK_SEVERITY}" $UNFIXED_FLAG \
+                        --exit-code 1 --format table "$IMAGE"
+                    fi
+                '''
+            }
+        }
         stage('Deploy Staging') {
             steps {
                 sh '''
@@ -156,7 +202,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: 'semgrep-report.json,semgrep.sarif,dependency-check-report/**,zap-report/**', allowEmptyArchive: true
+             archiveArtifacts artifacts: 'semgrep-report.json,semgrep.sarif,dependency-check-report/**,zap-report/**,trivy-report/**', allowEmptyArchive: true
         }
     }
 }

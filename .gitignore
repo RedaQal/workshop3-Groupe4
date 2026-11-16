@@ -8,3 +8,4 @@ dependency-check-report/
 zap-report/
 zap-wrk/
 zap-full-report/
+trivy-report/

@@ -63,7 +63,7 @@ docker compose up -d --build
 
 ## 3. Pipeline
 
-`Checkout` > `Install & Build` > `SAST (SonarQube || Semgrep)` > `SCA` > `Docker Build` > `Deploy Staging` > `DAST`
+`Checkout` > `Install & Build` > `SAST (SonarQube || Semgrep)` > `SCA` > `Docker Build` > `Image Scan (Trivy)` > `Deploy Staging` > `DAST`
 Les stages `SAST` et `SCA` **font échouer le build** en cas de violation :
 
 | Stage | Outil | Condition d'échec |
@@ -72,6 +72,7 @@ Les stages `SAST` et `SCA` **font échouer le build** en cas de violation :
 | SAST | Semgrep | Au moins une règle déclenchée (`--error`) |
 | SCA | OWASP Dependency-Check | Dépendance avec une CVE de score CVSS >= 7 (`--failOnCVSS 7`) |
 | DAST | OWASP ZAP | Observation uniquement pour l'instant (échec seulement si ZAP lui-même plante) |
+| Image Scan | Trivy | Vulnérabilité, secret ou mauvaise configuration de sévérité >= seuil (paramètre `TRIVY_BLOCK_SEVERITY`, `HIGH,CRITICAL` par défaut, correctif disponible) |
 
 - Les deux scanners SAST tournent en parallèle et vont jusqu'au bout, donc les deux rapports sont toujours produits.
 - Si un scan échoue, `Docker Build` et `Deploy Staging` ne sont pas exécutés.
@@ -82,6 +83,7 @@ Rapports :
 - Dependency-Check : artefacts du build (`dependency-check-report/`, HTML et JSON)
 - SonarQube : http://localhost:9000, projet `devsecops-workshop`
 - ZAP : artefacts du build (`zap-report/zap-report.html` et `.json`)
+- Trivy : artefacts du build (`trivy-report/`, HTML, JSON et tableau)
 
 ## 4. Configurer le Quality Gate SonarQube
 
@@ -222,6 +224,38 @@ Scan actif lancé sur le staging actuel (paramètre `ZAP_ACTIVE_SCAN`), sans cor
 ![ZAP scan actif](docs/screenshots/zap-active-summary.png)
 
 Résultats, discussion et limites : [docs/zap.md](docs/zap.md#résultats-du-scan-actif)
+## 7 ter. Scan d'image : Trivy
+
+Trivy analyse l'**image Docker finale** : CVE de l'OS et des dépendances, secrets, mauvaises configurations. Le scan est placé avant le déploiement : une image au-dessus du seuil n'arrive pas sur le staging.
+
+| Paramètre `TRIVY_BLOCK_SEVERITY` | Effet |
+|---|---|
+| `HIGH,CRITICAL` (défaut) | échec si une faille HIGH ou CRITICAL avec correctif disponible est présente |
+| `CRITICAL` | seuls les CRITICAL bloquent |
+| `NONE` | observation uniquement |
+
+- **Installation** : version épinglée dans `jenkins/Dockerfile` (aucune GitHub Action tierce), suite à la compromission de Trivy en mars 2026.
+- **Rapports** : artefacts du build (`trivy-report/`).
+- **Détails** (lancement manuel, lecture du rapport, remédiation, politique de seuil) : [docs/trivy.md](docs/trivy.md)
+### Avant / après
+
+**Avant** : l'image contient 9 vulnérabilités HIGH corrigeables (5 paquets npm embarqués dans l'image Node). Le stage `Image Scan` bloque le build.
+
+![Trivy avant](docs/screenshots/trivy-before.png)
+
+**Correction** : build en deux étapes, npm et yarn retirés de l'image finale, `HEALTHCHECK` ajouté.
+
+**Après** : le stage passe et le build continue jusqu'au staging et au DAST.
+
+![Trivy après](docs/screenshots/trivy-after-pipeline.png)
+
+| | Avant | Après |
+|---|---|---|
+| Vulnérabilités HIGH et CRITICAL corrigeables | 9 | 0 |
+| Vulnérabilités sans correctif (paquets Debian) | non affichées par le seuil | 33 (32 HIGH, 1 CRITICAL) |
+| Stage `Image Scan` | échec | succès |
+
+Un build vert ne signifie pas l'absence de HIGH ou de CRITICAL : le seuil par défaut ne bloque que ce qui est corrigeable. Les 33 constats restants n'ont pas de correctif publié ; ils sont analysés et la décision documentée dans [docs/trivy.md](docs/trivy.md).
 ## 8. Résultats : avant / après
 
 Le pipeline est d'abord exécuté sur le code **vulnérable**, puis sur le code **corrigé**.
@@ -303,7 +337,9 @@ Les scans passent et le build continue jusqu'au déploiement du staging (http://
 | Le premier build `DAST` est très long | Téléchargement de l'image ZAP (environ 1 Go) | Normal, les builds suivants sont rapides. Ou : `docker pull ghcr.io/zaproxy/zaproxy:stable` |
 | Le paramètre `ZAP_ACTIVE_SCAN` n'apparaît pas | Jenkins enregistre les paramètres après le premier build du nouveau Jenkinsfile | Lancer un premier build, puis utiliser *Build with Parameters* |
 | ZAP ne trouve aucune alerte de cookie | Le scan passif ne se connecte pas, donc ne voit pas le cookie de `/api/login` | Voir docs/zap.md, section sur les cookies |
-
+| Stage `Image Scan` : `Rapport Trivy incomplet` | La base de vulnérabilités ou l'image n'a pas pu être lue | Vérifier l'accès réseau à `ghcr.io` depuis Jenkins et que l'image existe (`docker images`) |
+| Trivy : erreur `TOOMANYREQUESTS` au téléchargement de la base | Limite de débit sur `ghcr.io` | Définir `TRIVY_DB_REPOSITORY` vers un miroir, ou réessayer plus tard |
+| `trivy: command not found` dans Jenkins | Image Jenkins non reconstruite | `docker compose build jenkins && docker compose up -d jenkins` |
 ## 10. Organisation du travail en équipe
 
 ### Règles
