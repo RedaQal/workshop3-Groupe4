@@ -40,8 +40,9 @@ Le scan est placé **avant** le déploiement : une image qui dépasse le seuil n
 | `CRITICAL` | seuil plus permissif : seuls les CRITICAL bloquent |
 | `NONE` | observation uniquement : rapports produits, aucun blocage |
 
-Le blocage utilise `--ignore-unfixed` : une vulnérabilité sans correctif publié n'est pas bloquante, car aucune action n'est possible. Elle reste visible dans le rapport complet.
+Par défaut, le blocage ignore les vulnérabilités sans correctif publié (`--ignore-unfixed`, paramètre `TRIVY_IGNORE_UNFIXED` à `true`) : aucune action n'est possible dessus. Elles restent visibles dans le rapport complet. Décocher le paramètre les compte aussi dans le blocage.
 
+- **Bandeau VEX** : Trivy ajoute un bandeau destiné aux mainteneurs de logiciels libres en tête de ses rapports. Le stage le désactive avec `TRIVY_DISABLE_VEX_NOTICE`.
 - **Cache** : la base de vulnérabilités est stockée dans `/var/jenkins_home/trivy-cache` (volume `jenkins_home`). Le premier build la télécharge, les suivants sont rapides.
 - **Réseau** : Jenkins doit pouvoir joindre `ghcr.io` pour récupérer la base.
 
@@ -198,6 +199,62 @@ CVE-2025-00000 exp:2027-01-31
 
 Sans date d'expiration, une exception devient permanente et finit oubliée.
 
+## Résultats après correction
+
+Après le passage au build en deux étapes (npm retiré de l'image finale), le build passe : `Image Scan (Trivy)`, `Deploy Staging` et `DAST` s'exécutent.
+
+![Pipeline Jenkins : Image Scan réussi](screenshots/trivy-after-pipeline.png)
+
+![Trivy après : constats restants](screenshots/trivy-after.png)
+
+**Les 9 vulnérabilités Node.js ont disparu** : le rapport ne contient plus de section Node.js. Leur disparition en retirant npm confirme qu'elles venaient de npm, livré avec l'image de base, et non du code de l'application. Le rapport ne contient aucune section de secrets ni de mauvaise configuration de niveau HIGH ou CRITICAL.
+
+### Ce qu'il reste : des paquets Debian sans correctif
+
+Le rapport complet (qui n'ignore pas les vulnérabilités non corrigées) liste **33 constats : 32 HIGH et 1 CRITICAL**, tous dans des paquets de l'OS Debian 12, **aucun avec une version corrigée disponible**. Ils correspondent à 9 CVE distinctes, répétées sur plusieurs paquets issus des mêmes sources :
+
+| CVE | Paquets concernés | Statut Debian | Nature |
+|---|---|---|---|
+| CVE-2026-53613 | `util-linux` et 7 paquets liés (`bsdutils`, `libblkid1`, `libmount1`, `libsmartcols1`, `libuuid1`, `mount`, `util-linux-extra`) | `affected` | situation de compétition (TOCTOU) dans `mount` |
+| CVE-2026-53615 | idem | `affected` | dépassement d'entier dans l'analyse des partitions DOS |
+| CVE-2026-78410 | idem | `affected` | montages liés restreints qui ne fixent pas la source |
+| CVE-2025-69720 | `ncurses-base`, `ncurses-bin`, `libtinfo6` | `affected` | dépassement de tampon |
+| CVE-2026-41992 | `gzip` | `fix_deferred` | divulgation d'information (décompression LZH) |
+| CVE-2026-54369 | `libacl1` | `fix_deferred` | traversée de lien symbolique |
+| CVE-2026-16742 | `libsystemd0`, `libudev1` | `fix_deferred` | élévation de privilèges locale (systemd-homed) |
+| CVE-2026-9538 | `perl-base` | `fix_deferred` | déni de service (Archive::Tar) |
+| CVE-2023-45853 | `zlib1g` | `will_not_fix` | dépassement de tampon (MiniZip), **CRITICAL** |
+
+| Statut | Sens |
+|---|---|
+| `affected` | la faille est reconnue, pas encore de correctif |
+| `fix_deferred` | l'éditeur a décidé de reporter la correction (faille jugée mineure) |
+| `will_not_fix` | l'éditeur ne corrigera pas |
+
+### Pourquoi le build est vert
+
+Le seuil par défaut (`HIGH,CRITICAL` avec `--ignore-unfixed`) ne bloque que ce qui est **corrigeable**. Ici, aucune des 9 CVE n'a de correctif : le blocage est vide et le build passe. **Un build vert ne veut donc pas dire qu'il n'y a plus de HIGH ou de CRITICAL** : il veut dire qu'aucun n'est corrigeable aujourd'hui. Ce choix de politique doit être explicite et documenté.
+
+### Décision sur les constats restants
+
+- **Pas d'action immédiate possible** : il n'existe pas de version corrigée à installer.
+- **Risque pratique à relativiser** : ces outils système (`mount`, `systemd`, `ncurses`, `gzip`) ne sont pas appelés par l'application. Une exploitation locale suppose que l'attaquant exécute déjà du code dans le conteneur. Pour le CRITICAL de `zlib1g`, le tracker de sécurité Debian précise la portée de la faille : à vérifier avant de conclure.
+- **Surveiller** : reconstruire régulièrement avec `--pull` et rescanner. Dès que Debian publie un correctif, le blocage se déclenche sur ces CVE, sans rien changer à la configuration.
+- **Réduire à la source** : changer d'image de base (voir ci-dessous).
+- **Accepter formellement** si besoin : `.trivyignore` avec justification et date d'expiration (section « Remédiation »).
+
+### Comparer les images de base (facultatif)
+
+Une comparaison sans rien construire montre ce que chaque image de base apporte :
+
+```bash
+docker exec jenkins trivy image --cache-dir /var/jenkins_home/trivy-cache --severity HIGH,CRITICAL node:22-bookworm-slim
+docker exec jenkins trivy image --cache-dir /var/jenkins_home/trivy-cache --severity HIGH,CRITICAL node:22-alpine
+docker exec jenkins trivy image --cache-dir /var/jenkins_home/trivy-cache --severity HIGH,CRITICAL gcr.io/distroless/nodejs22-debian12
+```
+
+Une image plus petite (Alpine, distroless) contient moins de paquets, donc en général moins de constats. En contrepartie, elle change de bibliothèque C (Alpine) ou n'a plus de shell (distroless), ce qui demande de retester le build de `better-sqlite3`, le `HEALTHCHECK` et le démarrage. Le nombre de constats ne se prédit pas : il se mesure.
+
 ## Seuil de blocage : quelle politique ?
 
 | Phase | Réglage | Raison |
@@ -206,6 +263,19 @@ Sans date d'expiration, une exception devient permanente et finit oubliée.
 | Premier blocage | `CRITICAL` | ne casse que sur les cas graves, pendant que l'équipe nettoie |
 | Cible du workshop | `HIGH,CRITICAL` avec `--ignore-unfixed` | seules les failles corrigeables bloquent |
 | Renforcé | `HIGH,CRITICAL` sans `--ignore-unfixed`, exceptions datées dans `.trivyignore` | exigence plus forte, pour un environnement sensible |
+
+### Démonstration du seuil sur l'image actuelle
+
+Les deux paramètres (`TRIVY_BLOCK_SEVERITY` et `TRIVY_IGNORE_UNFIXED`) permettent de voir le seuil agir sur la même image :
+
+| `TRIVY_BLOCK_SEVERITY` | `TRIVY_IGNORE_UNFIXED` | Résultat |
+|---|---|---|
+| `HIGH,CRITICAL` | coché | **succès** (observé) : aucun constat corrigeable |
+| `CRITICAL` | décoché | échec attendu : seul le CRITICAL de `zlib1g` (CVE-2023-45853) |
+| `HIGH,CRITICAL` | décoché | échec attendu : les 33 constats |
+| `NONE` | indifférent | succès attendu : observation uniquement |
+
+Seule la première ligne a été observée ; les autres sont le résultat attendu d'après le rapport complet, à confirmer en lançant le build avec ces paramètres.
 
 ## Discussion : Trivy dans un pipeline CI/CD
 

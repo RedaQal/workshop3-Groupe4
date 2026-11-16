@@ -237,6 +237,25 @@ Trivy analyse l'**image Docker finale** : CVE de l'OS et des dépendances, secre
 - **Installation** : version épinglée dans `jenkins/Dockerfile` (aucune GitHub Action tierce), suite à la compromission de Trivy en mars 2026.
 - **Rapports** : artefacts du build (`trivy-report/`).
 - **Détails** (lancement manuel, lecture du rapport, remédiation, politique de seuil) : [docs/trivy.md](docs/trivy.md)
+### Avant / après
+
+**Avant** : l'image contient 9 vulnérabilités HIGH corrigeables (5 paquets npm embarqués dans l'image Node). Le stage `Image Scan` bloque le build.
+
+![Trivy avant](docs/screenshots/trivy-before.png)
+
+**Correction** : build en deux étapes, npm et yarn retirés de l'image finale, `HEALTHCHECK` ajouté.
+
+**Après** : le stage passe et le build continue jusqu'au staging et au DAST.
+
+![Trivy après](docs/screenshots/trivy-after-pipeline.png)
+
+| | Avant | Après |
+|---|---|---|
+| Vulnérabilités HIGH et CRITICAL corrigeables | 9 | 0 |
+| Vulnérabilités sans correctif (paquets Debian) | non affichées par le seuil | 33 (32 HIGH, 1 CRITICAL) |
+| Stage `Image Scan` | échec | succès |
+
+Un build vert ne signifie pas l'absence de HIGH ou de CRITICAL : le seuil par défaut ne bloque que ce qui est corrigeable. Les 33 constats restants n'ont pas de correctif publié ; ils sont analysés et la décision documentée dans [docs/trivy.md](docs/trivy.md).
 ## 8. Résultats : avant / après
 
 Le pipeline est d'abord exécuté sur le code **vulnérable**, puis sur le code **corrigé**.
