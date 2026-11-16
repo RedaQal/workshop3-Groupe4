@@ -357,7 +357,7 @@ Les scans passent et le build continue jusqu'au déploiement du staging (http://
 | 2 | OWASP Dependency-Check | `feature/sca-dependency-check` | [docs/sca-dependency-check.md](docs/sca-dependency-check.md) | Fait |
 | 3 | Dependabot | `feature/dependabot` | [docs/dependabot.md](docs/dependabot.md) | Fait |
 | 4 | Gitleaks (secrets) | `feature/secrets-gitleaks` | `docs/gitleaks.md` | À faire |
-| 5 | Trivy (image Docker) | `feature/image-trivy` | `docs/trivy.md` | À faire |
+| 5 | Trivy (image Docker) | `feature/image-trivy` | [docs/trivy.md](docs/trivy.md)| Fait |
 | 6 | OWASP ZAP (DAST) | `feature/dast-zap` |[docs/zap.md](docs/zap.md) | Fait |
 
 Les tâches 4 à 6 modifient chacune le `Jenkinsfile` : les merger l'une après l'autre en rebasant (`git pull --rebase origin main`) avant chaque PR.
