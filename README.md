@@ -1,7 +1,7 @@
 # DevSecOps Workshop
 
 Application Next.js **volontairement vulnérable** + pipeline Jenkins avec analyse de sécurité automatisée :
-SAST (SonarQube, Semgrep), SCA (OWASP Dependency-Check) et mises à jour automatiques (Dependabot).
+SAST (SonarQube, Semgrep), SCA (OWASP Dependency-Check), scan d'image (Trivy), DAST (OWASP ZAP) et mises à jour automatiques (Dependabot). Un volet supplémentaire, hors pipeline, couvre la supervision en continu avec **Wazuh**.
 
 ⚠️ Ne jamais déployer en production.
 
@@ -14,9 +14,12 @@ SAST (SonarQube, Semgrep), SCA (OWASP Dependency-Check) et mises à jour automat
 5. [Vulnérabilités plantées](#5-vulnérabilités-plantées)
 6. [Lancer l'app sans Jenkins](#6-lancer-lapp-sans-jenkins)
 7. [SCA : analyse des dépendances](#7-sca--analyse-des-dépendances)
-8. [Résultats : avant / après](#8-résultats--avant--après)
+   - [7 bis. DAST : OWASP ZAP](#7-bis-dast--owasp-zap)
+   - [7 ter. Scan d'image : Trivy](#7-ter-scan-dimage--trivy)
+8. [Résultats SAST : avant / après](#8-résultats--avant--après)
 9. [Dépannage](#9-dépannage)
 10. [Organisation du travail en équipe](#10-organisation-du-travail-en-équipe)
+11. [Supervision et détection : Wazuh](#11-supervision-et-détection--wazuh)
 
 ## 1. Démarrer l'infra
 
@@ -42,6 +45,7 @@ docker compose up -d --build
   ```
 - Éviter les fins de ligne CRLF qui cassent les scripts du Jenkinsfile : `git config --global core.autocrlf input`.
 - Jenkins tourne dans un conteneur : le dépôt Git doit être **distant** (GitHub, GitLab, Gitea), pas un chemin local.
+- Fixer le nom du projet Compose en première ligne de `docker-compose.yml` (`name: devsecops-workshop`), pour éviter un conflit de noms de conteneurs si le dépôt est cloné dans un dossier au nom différent.
 
 ## 2. Configurer Jenkins
 
@@ -64,26 +68,27 @@ docker compose up -d --build
 ## 3. Pipeline
 
 `Checkout` > `Install & Build` > `SAST (SonarQube || Semgrep)` > `SCA` > `Docker Build` > `Image Scan (Trivy)` > `Deploy Staging` > `DAST`
-Les stages `SAST` et `SCA` **font échouer le build** en cas de violation :
+
+Les stages `SAST`, `SCA` et `Image Scan` **font échouer le build** en cas de violation :
 
 | Stage | Outil | Condition d'échec |
 |---|---|---|
 | SAST | SonarQube | Quality Gate en échec (`sonar.qualitygate.wait=true`, timeout 5 min) |
 | SAST | Semgrep | Au moins une règle déclenchée (`--error`) |
 | SCA | OWASP Dependency-Check | Dépendance avec une CVE de score CVSS >= 7 (`--failOnCVSS 7`) |
-| DAST | OWASP ZAP | Observation uniquement pour l'instant (échec seulement si ZAP lui-même plante) |
 | Image Scan | Trivy | Vulnérabilité, secret ou mauvaise configuration de sévérité >= seuil (paramètre `TRIVY_BLOCK_SEVERITY`, `HIGH,CRITICAL` par défaut, correctif disponible) |
+| DAST | OWASP ZAP | Observation uniquement pour l'instant (échec seulement si ZAP lui-même plante) |
 
 - Les deux scanners SAST tournent en parallèle et vont jusqu'au bout, donc les deux rapports sont toujours produits.
-- Si un scan échoue, `Docker Build` et `Deploy Staging` ne sont pas exécutés.
+- Si un scan échoue, les stages suivants ne sont pas exécutés.
 - Le staging est déployé sur le réseau Docker `devsecops` et exposé sur http://localhost:3001.
 
 Rapports :
 - Semgrep : artefacts du build (`semgrep-report.json`, `semgrep.sarif`)
 - Dependency-Check : artefacts du build (`dependency-check-report/`, HTML et JSON)
 - SonarQube : http://localhost:9000, projet `devsecops-workshop`
-- ZAP : artefacts du build (`zap-report/zap-report.html` et `.json`)
 - Trivy : artefacts du build (`trivy-report/`, HTML, JSON et tableau)
+- ZAP : artefacts du build (`zap-report/zap-report.html` et `.json`)
 
 ## 4. Configurer le Quality Gate SonarQube
 
@@ -217,6 +222,11 @@ Le SAST et le SCA analysent le code et les dépendances. Le DAST attaque l'appli
 **Après** : en-têtes ajoutés dans `next.config.js`.
 
 ![ZAP après](docs/screenshots/zap-after.png)
+
+| | Avant | Après |
+|---|---|---|
+| Alertes ZAP | 10 (2 Medium, 6 Low, 2 Info) | 4 (2 Medium, 0 Low, 2 Info) |
+
 ### Scan actif
 
 Scan actif lancé sur le staging actuel (paramètre `ZAP_ACTIVE_SCAN`), sans corrections supplémentaires : 5 alertes (1 High, 2 Medium, 2 Info). L'alerte High est un faux positif probable, analysé dans la documentation.
@@ -224,6 +234,7 @@ Scan actif lancé sur le staging actuel (paramètre `ZAP_ACTIVE_SCAN`), sans cor
 ![ZAP scan actif](docs/screenshots/zap-active-summary.png)
 
 Résultats, discussion et limites : [docs/zap.md](docs/zap.md#résultats-du-scan-actif)
+
 ## 7 ter. Scan d'image : Trivy
 
 Trivy analyse l'**image Docker finale** : CVE de l'OS et des dépendances, secrets, mauvaises configurations. Le scan est placé avant le déploiement : une image au-dessus du seuil n'arrive pas sur le staging.
@@ -237,6 +248,7 @@ Trivy analyse l'**image Docker finale** : CVE de l'OS et des dépendances, secre
 - **Installation** : version épinglée dans `jenkins/Dockerfile` (aucune GitHub Action tierce), suite à la compromission de Trivy en mars 2026.
 - **Rapports** : artefacts du build (`trivy-report/`).
 - **Détails** (lancement manuel, lecture du rapport, remédiation, politique de seuil) : [docs/trivy.md](docs/trivy.md)
+
 ### Avant / après
 
 **Avant** : l'image contient 9 vulnérabilités HIGH corrigeables (5 paquets npm embarqués dans l'image Node). Le stage `Image Scan` bloque le build.
@@ -256,12 +268,11 @@ Trivy analyse l'**image Docker finale** : CVE de l'OS et des dépendances, secre
 | Stage `Image Scan` | échec | succès |
 
 Un build vert ne signifie pas l'absence de HIGH ou de CRITICAL : le seuil par défaut ne bloque que ce qui est corrigeable. Les 33 constats restants n'ont pas de correctif publié ; ils sont analysés et la décision documentée dans [docs/trivy.md](docs/trivy.md).
+
 ## 8. Résultats : avant / après
 
-Le pipeline est d'abord exécuté sur le code **vulnérable**, puis sur le code **corrigé**.
-| | Avant | Après |
-|---|---|---|
-| Alertes ZAP | 10 (2 Medium, 6 Low, 2 Info) | 4 (2 Medium, 0 Low, 2 Info) |
+Le pipeline est d'abord exécuté sur le code **vulnérable**, puis sur le code **corrigé**. Cette section couvre le stage `SAST` ; les résultats avant/après de `SCA`, `DAST` et `Image Scan` sont dans leurs sections respectives (7, 7 bis, 7 ter).
+
 ### 8.1 Avant : code vulnérable
 
 Le build échoue au stage `SAST` : le Quality Gate SonarQube est en échec et Semgrep bloque sur ses findings. Les stages suivants ne sont pas exécutés.
@@ -340,6 +351,8 @@ Les scans passent et le build continue jusqu'au déploiement du staging (http://
 | Stage `Image Scan` : `Rapport Trivy incomplet` | La base de vulnérabilités ou l'image n'a pas pu être lue | Vérifier l'accès réseau à `ghcr.io` depuis Jenkins et que l'image existe (`docker images`) |
 | Trivy : erreur `TOOMANYREQUESTS` au téléchargement de la base | Limite de débit sur `ghcr.io` | Définir `TRIVY_DB_REPOSITORY` vers un miroir, ou réessayer plus tard |
 | `trivy: command not found` dans Jenkins | Image Jenkins non reconstruite | `docker compose build jenkins && docker compose up -d jenkins` |
+| `docker compose up` : conflit de nom de conteneur ou volumes vides recréés | Le nom du projet Compose dépend du nom du dossier | Fixer `name: devsecops-workshop` en tête de `docker-compose.yml` (voir section 1) |
+
 ## 10. Organisation du travail en équipe
 
 ### Règles
@@ -357,7 +370,24 @@ Les scans passent et le build continue jusqu'au déploiement du staging (http://
 | 2 | OWASP Dependency-Check | `feature/sca-dependency-check` | [docs/sca-dependency-check.md](docs/sca-dependency-check.md) | Fait |
 | 3 | Dependabot | `feature/dependabot` | [docs/dependabot.md](docs/dependabot.md) | Fait |
 | 4 | Gitleaks (secrets) | `feature/secrets-gitleaks` | `docs/gitleaks.md` | À faire |
-| 5 | Trivy (image Docker) | `feature/image-trivy` | [docs/trivy.md](docs/trivy.md)| Fait |
-| 6 | OWASP ZAP (DAST) | `feature/dast-zap` |[docs/zap.md](docs/zap.md) | Fait |
+| 5 | Trivy (image Docker) | `feature/image-trivy` | [docs/trivy.md](docs/trivy.md) | Fait |
+| 6 | OWASP ZAP (DAST) | `feature/dast-zap` | [docs/zap.md](docs/zap.md) | Fait |
+| 7 | Wazuh (supervision, hors pipeline) | `feature/wazuh-monitoring` | [docs/wazuh.md](docs/wazuh.md) | Fait |
 
-Les tâches 4 à 6 modifient chacune le `Jenkinsfile` : les merger l'une après l'autre en rebasant (`git pull --rebase origin main`) avant chaque PR.
+Les tâches 4 à 6 modifient chacune le `Jenkinsfile` : les merger l'une après l'autre en rebasant (`git pull --rebase origin main`) avant chaque PR. La tâche 7 (Wazuh) ne touche pas au `Jenkinsfile` ni à `docker-compose.yml` du workshop : elle utilise ses propres fichiers (`wazuh/`) et peut être mergée indépendamment, sans rebase nécessaire vis-à-vis des autres tâches.
+
+## 11. Supervision et détection : Wazuh
+
+En complément du pipeline (préventif), ce volet couvre la **supervision en continu** d'un système déployé avec Wazuh : déploiement Docker, agent de supervision, détection de force brute SSH et d'élévation de privilèges, analyse des CVE. Wazuh n'est **pas intégré au Jenkinsfile** : c'est un outil séparé, avec sa propre pile Docker.
+
+| | Pipeline (sections 3 à 7 ter) | Wazuh |
+|---|---|---|
+| Quand | avant et pendant le déploiement | en continu, après le déploiement |
+| Rôle | prévention (bloque une faille avant la mise en production) | détection (observe un système en fonctionnement) |
+
+- **Déploiement** : pile Wazuh officielle (`wazuh-docker`, tag épinglé `v4.14.6`), conteneur cible (`wazuh-target` : SSH + agent) et conteneur attaquant (`wazuh-attacker` : Hydra).
+- **Détection** : force brute SSH (règles 5758, 5763, catégorie MITRE ATT&CK *Brute Force*) et élévation de privilèges (règles 5402, 5403), corrélées sur le même agent.
+- **Vulnérabilités** : module *Vulnerability Detection* de Wazuh, comparé au scan Trivy de l'image de l'application sur la même base Debian.
+- **Détails complets** (déploiement pas à pas, dépannage de l'agent, résultats, discussion) : [docs/wazuh.md](docs/wazuh.md)
+
+> Avant de publier des captures du tableau de bord Wazuh, filtrer sur l'`agent.id` de la cible de l'atelier et retirer tout agent hors périmètre (poste personnel, par exemple) : voir la note en tête de la section "Résultats" de `docs/wazuh.md`.
